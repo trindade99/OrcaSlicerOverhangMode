@@ -3762,6 +3762,11 @@ void GLCanvas3D::on_key(wxKeyEvent& evt)
                 }
                 else if (keyCode == WXK_CONTROL)
                     m_dirty = true;
+                else if (keyCode == 'W' && !evt.HasAnyModifiers()
+                         && m_canvas_type == ECanvasType::CanvasView3D
+                         && current_printer_technology() == ptFFF) {
+                    return; // consume KEY_UP W — panel stays open, no pong
+                }
                 else if (m_gizmos.is_enabled() && !m_selection.is_empty() && m_canvas_type != CanvasAssembleView) {
                     translationProcessor.process(evt);
 
@@ -3842,6 +3847,12 @@ void GLCanvas3D::on_key(wxKeyEvent& evt)
                 }
                 else if (keyCode == WXK_CONTROL)
                     m_dirty = true;
+                else if (keyCode == 'W' && !evt.HasAnyModifiers()
+                         && m_canvas_type == ECanvasType::CanvasView3D
+                         && current_printer_technology() == ptFFF) {
+                    force_main_toolbar_left_action(get_main_toolbar_item_id("overhang_preview"));
+                    return; // consume KEY_DOWN W — prevents macOS pong
+                }
                 else if (m_gizmos.is_enabled() && !m_selection.is_empty() && m_canvas_type != CanvasAssembleView) {
                     auto _do_rotate = [this](double angle_z_rad) {
                         m_selection.setup_cache();
@@ -6894,7 +6905,7 @@ bool GLCanvas3D::_init_main_toolbar()
     // Overhang Preview toggle button
     item.name = "overhang_preview";
     item.icon_filename = m_is_dark ? "toolbar_overhang_preview_dark.svg" : "toolbar_overhang_preview.svg";
-    item.tooltip = _utf8(L("Overhang Preview"));
+    item.tooltip = _utf8(L("Overhang Preview [W]"));
     item.sprite_id++;
     item.left.toggable = true;
     item.left.action_callback = [this]() { if (m_canvas != nullptr) wxPostEvent(m_canvas, SimpleEvent(EVT_GLTOOLBAR_OVERHANG_PREVIEW)); };
@@ -9351,14 +9362,13 @@ void GLCanvas3D::_render_collapse_toolbar() const
 //BBS reander assemble toolbar
 void GLCanvas3D::_render_overhang_toolbar()
 {
-    // Only show in the 3D prepare view when overhang preview is active
     if (m_canvas_type != ECanvasType::CanvasView3D)
         return;
     if (!is_overhang_shown())
         return;
 
     ImGuiWrapper& imgui = *wxGetApp().imgui();
-    const float canvas_w = float(get_canvas_size().get_width());
+    const float canvas_w  = float(get_canvas_size().get_width());
     const float toolbar_h = m_main_toolbar.get_height();
 
 #if ENABLE_RETINA_GL
@@ -9367,66 +9377,108 @@ void GLCanvas3D::_render_overhang_toolbar()
     const float sc = 1.0f;
 #endif
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.f * sc, 8.f * sc));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.f * sc);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg,
-        m_is_dark ? ImGuiWrapper::COL_TOOLBAR_BG_DARK : ImGuiWrapper::COL_TOOLBAR_BG);
-
-    // Position: just below the main toolbar, right side
+    ImGuiWrapper::push_toolbar_style(sc);
     imgui.set_next_window_pos(canvas_w - 10.f * sc, toolbar_h + 6.f * sc,
                               ImGuiCond_Always, 1.0f, 0.0f);
-    imgui.begin(_L("Overhang Preview"), ImGuiWindowFlags_AlwaysAutoResize |
-                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
-                ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove |
-                ImGuiWindowFlags_NoResize);
+    imgui.begin(_L("Overhang Preview"),
+        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
 
-    // Title row
-    ImGui::TextColored(ImVec4(1.f, 1.f, 1.f, 1.f), "%s", _u8L("Overhang Preview").c_str());
-    ImGui::SameLine();
-    // Close / toggle off button — force_main_toolbar_left_action toggles the
-    // button state AND fires EVT_GLTOOLBAR_OVERHANG_PREVIEW, which turns overhang off
-    if (ImGui::SmallButton("X##overhang_close")) {
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar(3);
-        imgui.end();
-        force_main_toolbar_left_action(get_main_toolbar_item_id("overhang_preview"));
-        return;
-    }
-
-    ImGui::Separator();
-
-    // Angle slider
+    // ── Row: [Threshold angle]  [────▲────]  [45] ─────────────────────────
     std::string angle_str = wxGetApp().app_config->get("overhang_threshold_angle");
-    float angle = angle_str.empty() ? 45.f : std::stof(angle_str);
-    ImGui::PushItemWidth(160.f * sc);
-    if (ImGui::SliderFloat("##overhang_angle", &angle, 0.f, 90.f, "%.0f°")) {
+    float angle   = angle_str.empty() ? 45.f : std::stof(angle_str);
+    bool  changed = false;
+
+    const float input_w  = 52.f * sc;
+    const float slider_w = 160.f * sc;
+
+    ImGui::TextUnformatted(_u8L("Threshold angle").c_str());
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(slider_w);
+    if (imgui.bbl_slider_float_style("##overhang_angle", &angle, 0.f, 90.f, "%.0f\xc2\xb0"))
+        changed = true;
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(input_w);
+    ImGui::InputFloat("##overhang_input", &angle, 0.f, 0.f, "%.0f");
+    if (ImGui::IsItemDeactivatedAfterEdit())
+        changed = true;
+
+    if (changed) {
         angle = std::clamp(angle, 0.f, 90.f);
         wxGetApp().app_config->set("overhang_threshold_angle", std::to_string(angle));
         set_slope_normal_angle(angle);
-        request_extra_frame();
+        m_dirty = true;
     }
-    ImGui::PopItemWidth();
-    ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.f), "%s", _u8L("Threshold angle").c_str());
 
     ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
 
-    // Color legend
-    const float sq = 12.f * sc;
-    ImGui::ColorButton("##col_ok",   ImVec4(0.15f, 0.72f, 0.38f, 1.f),
-                       ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, ImVec2(sq, sq));
-    ImGui::SameLine();
-    ImGui::Text("%s", _u8L("Printable").c_str());
-    ImGui::SameLine(0.f, 16.f * sc);
-    ImGui::ColorButton("##col_oh",   ImVec4(0.82f, 0.27f, 0.27f, 1.f),
-                       ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, ImVec2(sq, sq));
-    ImGui::SameLine();
-    ImGui::Text("%s", _u8L("Overhang").c_str());
+    // ── Footer: [●?]  [Reset]                              [Done] ──────────
+    // OrcaSlicer teal circle (#009688) as icon — hoverable, not a button
+    const float  r        = 11.f * sc;
+    ImVec2       help_pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##overhang_help_icon", ImVec2(r * 2.f, r * 2.f));
+    const bool   help_hov = ImGui::IsItemHovered();
+    ImDrawList*  dl       = ImGui::GetWindowDrawList();
+    // #009688 normal, slightly darker on hover (same ratio OrcaSlicer uses)
+    ImU32 circ_col = help_hov
+        ? ImGui::ColorConvertFloat4ToU32(ImVec4(0.0f, 0.502f, 0.439f, 1.0f))
+        : ImGui::ColorConvertFloat4ToU32(ImVec4(0.0f, 0.588f, 0.533f, 1.0f));
+    dl->AddCircleFilled(ImVec2(help_pos.x + r, help_pos.y + r), r, circ_col);
+    const char* q    = "?";
+    ImVec2      q_sz = ImGui::CalcTextSize(q);
+    dl->AddText(ImVec2(help_pos.x + r - q_sz.x * 0.5f,
+                       help_pos.y + r - q_sz.y * 0.5f),
+                IM_COL32(255, 255, 255, 255), q);
 
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar(3);
+    if (help_hov) {
+        // Tooltip anchored below the panel window — does not follow the mouse
+        ImVec2 win_pos  = ImGui::GetWindowPos();
+        ImVec2 win_size = ImGui::GetWindowSize();
+        ImGui::SetNextWindowPos(
+            ImVec2(win_pos.x, win_pos.y + win_size.y + 4.f * sc),
+            ImGuiCond_Always);
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(_u8L(
+            "Highlights faces exceeding the threshold overhang angle,\n"
+            "that may need support or bridging.\n"
+            "\n"
+            "Angle is measured from vertical:\n"
+            "   0\xc2\xb0 = Perfect horizontal faces\n"
+            "  45\xc2\xb0 = Standard FDM overhang limit\n"
+            "  90\xc2\xb0 = Perfect vertical faces").c_str());
+        ImGui::EndTooltip();
+    }
+
+    ImGui::SameLine();
+
+    // Reset — greyed out when already at default 45
+    const bool at_default = std::abs(angle - 45.f) < 0.5f;
+    if (at_default)
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.4f);
+    bool reset = imgui.button(_L("Reset"));
+    if (at_default) {
+        ImGui::PopStyleVar();
+        reset = false; // ignore any click while greyed out
+    }
+    if (reset) {
+        angle = 45.f;
+        wxGetApp().app_config->set("overhang_threshold_angle", "45");
+        set_slope_normal_angle(45.f);
+        request_extra_frame();
+    }
+
+    const float btn_done_w = 58.f * sc;
+    ImGui::SameLine(ImGui::GetWindowWidth() - btn_done_w - ImGui::GetStyle().WindowPadding.x);
+    bool done = imgui.button(_L("Done"), btn_done_w, 0.f);
+
+    ImGuiWrapper::pop_toolbar_style();
     imgui.end();
+
+    if (done)
+        force_main_toolbar_left_action(get_main_toolbar_item_id("overhang_preview"));
 }
 
 void GLCanvas3D::_render_paint_toolbar() const

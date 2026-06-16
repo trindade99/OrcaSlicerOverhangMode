@@ -1058,7 +1058,10 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType       type,
     if (disable_cullface)
         glsafe(::glDisable(GL_CULL_FACE));
 
-    const float support_normal_z = get_selection_support_normal_z();
+    // Overhang Preview: use slider angle when active, otherwise derive from support settings
+    const float support_normal_z = m_slope.isGlobalActive
+        ? m_slope.normal_z
+        : get_selection_support_normal_z();
 
     for (GLVolumeWithIdAndZ& volume : to_render) {
 #if ENABLE_MODIFIERS_ALWAYS_TRANSPARENT
