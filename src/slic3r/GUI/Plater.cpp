@@ -4702,6 +4702,7 @@ struct Plater::priv
     void on_action_split_objects(SimpleEvent&);
     void on_action_split_volumes(SimpleEvent&);
     void on_action_layersediting(SimpleEvent&);
+    void on_action_overhang_preview(SimpleEvent&);
     void on_create_filament(SimpleEvent &);
     void on_modify_filament(SimpleEvent &);
     void on_add_filament(SimpleEvent &);
@@ -5199,6 +5200,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
         view3D_canvas->Bind(EVT_GLTOOLBAR_COPY, [q](SimpleEvent&) { q->copy_selection_to_clipboard(); });
         view3D_canvas->Bind(EVT_GLTOOLBAR_PASTE, [q](SimpleEvent&) { q->paste_from_clipboard(); });
         view3D_canvas->Bind(EVT_GLTOOLBAR_LAYERSEDITING, &priv::on_action_layersediting, this);
+        view3D_canvas->Bind(EVT_GLTOOLBAR_OVERHANG_PREVIEW, &priv::on_action_overhang_preview, this);
         //BBS: add clone
         view3D_canvas->Bind(EVT_GLTOOLBAR_CLONE, [q](SimpleEvent&) { q->clone_selection(); });
         view3D_canvas->Bind(EVT_GLTOOLBAR_MORE, [q](SimpleEvent&) { q->increase_instances(); });
@@ -11519,6 +11521,22 @@ void Plater::priv::on_action_layersediting(SimpleEvent&)
 {
     view3D->enable_layers_editing(!view3D->is_layers_editing_enabled());
     notification_manager->set_move_from_overlay(view3D->is_layers_editing_enabled());
+}
+
+void Plater::priv::on_action_overhang_preview(SimpleEvent&)
+{
+    // Toggle the global overhang/slope overlay
+    bool currently_shown = q->is_view3D_overhang_shown();
+    q->show_view3D_overhang(!currently_shown);
+
+    // If turning on, apply the last-saved threshold angle from config
+    if (!currently_shown) {
+        std::string angle_str = wxGetApp().app_config->get("overhang_threshold_angle");
+        float angle = angle_str.empty() ? 45.f : std::stof(angle_str);
+        view3D->get_canvas3d()->set_slope_normal_angle(angle);
+    }
+
+    view3D->get_canvas3d()->request_extra_frame();
 }
 
 void Plater::priv::on_create_filament(SimpleEvent &)
